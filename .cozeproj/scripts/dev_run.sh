@@ -2,7 +2,16 @@
 echo "⚙️ dev_run.sh 开始运行"
 set -Eeuo pipefail
 
-cd "${COZE_WORKSPACE_PATH}"
+# 兼容 Coze 平台外运行:无 COZE_WORKSPACE_PATH 时使用脚本所在仓库根目录
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_PATH="${COZE_WORKSPACE_PATH:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+cd "${WORKSPACE_PATH}"
+echo "📁 工作目录: ${WORKSPACE_PATH}"
+
+# 兼容缺失的端口变量
+DEPLOY_RUN_PORT="${DEPLOY_RUN_PORT:-5000}"
+export DEPLOY_RUN_PORT
+echo "🌐 Web 端口: ${DEPLOY_RUN_PORT}"
 
 # ---------------------------------------------------------
 # PID 文件，用于追踪上一次启动的进程树

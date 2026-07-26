@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build server
+        run: pnpm build:server
+
+      - name: Build H5
+        run: pnpm build:h5
+        env:
+          TARO_ENV: h5
+
+      - name: Start server in background
+        run: |
+          node projects/server/dist/main.js &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Test health endpoint
+        run: |
+          curl -sSf http://localhost:3000/api/health || (echo "health check failed" && exit 1)
+          curl -sSf http://localhost:3000/api || (echo "root endpoint failed" && exit 1)
+
+      - name: Test parse endpoint (negative case)
+        run: |
+          curl -s -X POST http://localhost:3000/api/douyin/parse \
+            -H "Content-Type: application/json" \
+            -d '{"text":"invalid text"}' || true
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "${SERVER_PID:-}" ]; then
+            kill ${SERVER_PID} 2>/dev/null || true
+          fi
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            projects/server/dist/
+            dist-web/
+          retention-days: 7

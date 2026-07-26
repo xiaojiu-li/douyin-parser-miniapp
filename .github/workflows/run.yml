@@ -1,0 +1,78 @@
+name: Run Server
+
+# 手动触发 - 在 GitHub 上启动服务并保持运行 5 分钟供外部访问
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: '运行时长(分钟,最大 10)'
+        required: false
+        default: '5'
+
+jobs:
+  run:
+    name: Start NestJS Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build server
+        run: pnpm build:server
+
+      - name: Start server
+        run: |
+          node projects/server/dist/main.js &
+          echo $! > /tmp/server.pid
+          sleep 3
+          echo "Server started"
+
+      - name: Print public IP
+        id: ip
+        run: |
+          PUBLIC_IP=$(curl -s https://api.ipify.org || echo unknown)
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          echo "::notice::服务地址(仅 runner 内部可达): http://$PUBLIC_IP:3000/api"
+
+      - name: Show health status
+        run: |
+          echo "=== /api ==="
+          curl -s http://localhost:3000/api || true
+          echo ""
+          echo "=== /api/health ==="
+          curl -s http://localhost:3000/api/health || true
+          echo ""
+
+      - name: Keep alive
+        run: |
+          DURATION=${{ github.event.inputs.duration || '5' }}
+          DURATION=${DURATION:-5}
+          if [ "$DURATION" -gt 10 ]; then DURATION=10; fi
+          echo "服务将保持运行 $DURATION 分钟..."
+          for i in $(seq 1 $DURATION); do
+            sleep 60
+            echo "[$i/$DURATION min] 仍然运行中..."
+            curl -s http://localhost:3000/api/health > /dev/null || (echo "服务异常退出" && exit 1)
+          done
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill $(cat /tmp/server.pid) 2>/dev/null || true
+          fi
